@@ -22,7 +22,7 @@ haystack.fields.CharField (and haystack.fields.FacetCharField), you get the foll
 * MultiValueUnsignedIntegerField (faceted is implied due to the way cloudsearch works)
 
 Pull requests are welcome. In particular, the tests are still getting up to speed, and it's an open question of how much of
-SearchQuerySet is worth implementing to gain features written around Haystack. 
+SearchQuerySet is worth implementing to gain features written around Haystack.
 
 This heavily depends on the excellent boto library. The boto plugin for cloudsearch is still very new and would also appreciate
 pull requests.
@@ -36,7 +36,7 @@ Requirements
 * Python 2.7 (TODO: test 2.6, PyPy)
 * Django 1.4+ (TODO: test Django 1.3.x support?)
 * Django-Haystack 2.x
-* Boto from `https://github.com/pbs/boto/tree/cloudsearch` (TODO: update when mainline boto has these patches)
+* Boto from `https://github.com/Kaiju-Tech/boto.git` (TODO: update when mainline boto has these patches)
 * Amazon AWS account credentials
 
 Installation
@@ -46,7 +46,7 @@ Installation
 
    First, install the modified boto::
 
-        pip install -e git+https://github.com/pbs/boto.git@cloudsearch#egg=boto
+        pip install -e git+https://github.com/Kaiju-Tech/boto.git
 
    From inside the repo's root directory::
 
@@ -99,10 +99,10 @@ this here and submit it to boto for their docs as well)
 
 * *backend.get_searchdomain_name* -- takes an index instance and yields a unicode string representing the SearchDomain
 * *backend.boto_conn* -- is the live boto cloudsearch layer 2 object. You can use it to get a reference to the SearchDomain like this::
-        
+
         backend = get_backend(my_index_instance)
         backend.boto_conn.get_domain(backend.get_searchdomain_name(my_index_instance))
- 
+
 *get_queryset* wraps the results of a search the 'results' key in the dictionary returned by search() and gives you
 a Django QuerySet over those results for the appropriate model.
 
