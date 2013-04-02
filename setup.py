@@ -1,5 +1,5 @@
 import os
-from distutils.core import setup
+from setuptools import setup, find_packages
 
 def read(fname):
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), fname)) as f:
@@ -22,4 +22,6 @@ setup(
         url='https://github.com/pbs/haystack-cloudsearch',
         license='Apache License (2.0)',
         py_modules=['haystack_cloudsearch'],
+        packages=find_packages(),
+        include_package_data=True,
 )
