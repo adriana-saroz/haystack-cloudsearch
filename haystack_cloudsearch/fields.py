@@ -20,6 +20,7 @@ class UnsignedIntegerField(IntegerField):
         v = super(UnsignedIntegerField, self).convert(value)
         if v is None or v < 0:
             raise TypeError("UnsignedIntegerField does not allow negative integers.")
+        return v
 
 
 class MultiValueCharField(MultiValueField):
