@@ -58,3 +58,11 @@ def instance_to_dict(obj):
 def botobool(obj):
     """ returns boto results compatible value """
     return u'false' if not bool(obj) else u'true'
+
+def get_domain(domain_name, boto_conn):
+    """
+    Return a :class:`boto.cloudsearch.domain.Domain` object
+    corresponding to domain_name. Returns None if domain_name
+    is not found.
+    """
+    return dict((x.name,x) for x in boto_conn.list_domains()).get(domain_name, None)
