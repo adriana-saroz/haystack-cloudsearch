@@ -1,4 +1,3 @@
-
 import logging
 import time
 
@@ -12,24 +11,17 @@ from haystack.exceptions import MissingDependency
 from haystack.models import SearchResult
 from haystack.utils import get_identifier
 
+from haystack_cloudsearch.cloudsearch_utils import get_domain
+from haystack_cloudsearch.exceptions import *
 
 from haystack_cloudsearch.cloudsearch_utils import (ID, DJANGO_CT, DJANGO_ID,
                                                     gen_version,
                                                     botobool)
+
 try:
     import boto
 except ImportError:
     raise MissingDependency("The 'cloudsearch' backend requires the installation of 'boto'. Please refer to the documentation.")
-
-try:
-    from boto.cloudsearch import CloudsearchProcessingException, CloudsearchNeedsIndexingException
-except ImportError:
-    raise MissingDependency("The 'cloudsearch' backend requires an installation of 'boto' from the cloudsearch branch at https://github.com/pbs/boto")
-
-
-class CloudsearchDryerExploded(Exception):
-    """ This is raised when the max timeout for a spinlock is encountered. """
-    pass
 
 
 class CloudsearchSearchBackend(BaseSearchBackend):
@@ -43,20 +35,6 @@ class CloudsearchSearchBackend(BaseSearchBackend):
         if not 'AWS_SECRET_KEY' in connection_options:
             raise ImproperlyConfigured("You must specify a 'AWS_SECRET_KEY' in your settings for connection '%s'." % connection_alias)
 
-        # We want to check if there is a 'REGION' passed into the connection. If there is we validate it with the
-        # available regions.
-        region_name = connection_options.get('REGION', None)
-        region_list = [cloudsearch_region.name for cloudsearch_region in boto.cloudsearch.regions()]
-        region_conn = None
-
-        if region_name and region_name not in region_list:
-            raise ImproperlyConfigured("The 'REGION' in your connection settings is not valid. Available regions are %s" % region_list)
-        elif region_name:
-            for region in boto.cloudsearch.regions():
-                if region.name == region_name:
-                    region_conn = region
-                    break
-
         # Allow overrides for the SearchDomain prefix
         self.search_domain_prefix = connection_options.get('SEARCH_DOMAIN_PREFIX', 'haystack')
 
@@ -69,19 +47,14 @@ class CloudsearchSearchBackend(BaseSearchBackend):
         if self.ip_address is None:
             raise ImproperlyConfigured("You must specify IP_ADDRESS in your settings for connection '%s'." % connection_alias)
 
-        self.boto_conn = boto.connect_cloudsearch(
-            aws_access_key_id=connection_options['AWS_ACCESS_KEY_ID'],
-            aws_secret_access_key=connection_options['AWS_SECRET_KEY'],
-            region=region_conn
-        )
-
+        self.boto_conn = boto.connect_cloudsearch(connection_options['AWS_ACCESS_KEY_ID'], connection_options['AWS_SECRET_KEY'])
         # this will become a standard haystack logger down the line
         self.log = logging.getLogger('haystack-cloudsearch')
         self.setup_complete = False
 
     def get_domain(self, index):
         """ Given a SearchIndex, return a boto Domain object """
-        return self.boto_conn.get_domain(self.get_searchdomain_name(index))
+        return get_domain(self.get_searchdomain_name(index), self.boto_conn)
 
     def enable_index_access(self, index, ip_address):
         """ given an index and an ip_address to enable, enable searching and document services """
@@ -90,7 +63,7 @@ class CloudsearchSearchBackend(BaseSearchBackend):
     def enable_domain_access(self, search_domain, ip_address):
         """ takes the cloudsearch search_domain name  and an ip_address to enable searching and doc services for
         """
-        domain = self.boto_conn.get_domain(search_domain)
+        domain = get_domain(search_domain, self.boto_conn)
         if domain is None:
             raise Exception('Unable to enable SearchDomain %s because %s was not found.' % (search_domain, search_domain))
         policy = domain.get_access_policies()
@@ -146,7 +119,7 @@ class CloudsearchSearchBackend(BaseSearchBackend):
                 self.log.critical("Generated SearchDomain name, '%s', for index, '%s', failed validation constraints." % (
                     search_domain_name, index))
                 raise
-            domain = self.boto_conn.get_domain(search_domain_name)
+            domain = get_domain(search_domain_name, self.boto_conn)
             should_build_schema = False
             if domain is None:
                 domain = self.boto_conn.create_domain(search_domain_name)
@@ -389,7 +362,7 @@ class CloudsearchSearchBackend(BaseSearchBackend):
         return False
 
     def domain_processing_spinlock(self, domains):
-        return self.spinlock(lambda: not filter(None, map(self.boto_conn.get_domain, domains)), CloudsearchProcessingException, 'domain processing')
+        return self.spinlock(lambda: not filter(None, map(get_domain, domains, self.boto_conn)), CloudsearchProcessingException, 'domain processing')
 
     def search(self, query_string, **kwargs):
         """ Blended search across all SearchIndexes.
@@ -424,10 +397,14 @@ class CloudsearchSearchBackend(BaseSearchBackend):
                     'hits': 0,
                     'facets': {}}
 
-        if not self.setup_complete:
-            self.setup()
+        #if not self.setup_complete:
+        #    self.setup()
 
-        indexes = kwargs.pop('limit_indexes')
+        try:
+            indexes = kwargs.pop('limit_indexes')
+        except:
+            indexes = None
+
         if indexes is None:
             conn = haystack.connections[self.connection_alias]
             unified_index = conn.get_unified_index()
@@ -475,7 +452,11 @@ class CloudsearchSearchBackend(BaseSearchBackend):
             search_service = self.get_domain(index).get_search_service(loose=False, needs_integrity=True)
         except (CloudsearchProcessingException, CloudsearchNeedsIndexingException):
             raise  # We should probably wrap this into something more common to haystack
-        query = search_service.search(bq=query_string, return_fields=return_fields, **kwargs)
+        query = search_service.search(bq=query_string,
+                                      return_fields=return_fields,
+                                      start=kwargs.get('start_offset', 0),
+                                      size=kwargs.get('end_offset', 0),
+                                      rank=['auction_id'])
         return query
 
     def _process_results(self, boto_results, result_class=None):
@@ -528,14 +509,97 @@ class CloudsearchSearchBackend(BaseSearchBackend):
 
                 result = result_class(app_label, model_name, result[DJANGO_ID][0], score, **additional_fields)
                 results.append(result)
-
         return {'results': results,
                 'hits': hits,
                 'facets': facets}
 
 
+from haystack.inputs import Clean
 class CloudsearchSearchQuery(BaseSearchQuery):
-    pass
+    def build_query_fragment(self, field, filter_type, value):
+        from haystack import connections
+        query_frag = ''
+
+        if not hasattr(value, 'input_type_name'):
+            # Handle when we've got a ``ValuesListQuerySet``...
+            if hasattr(value, 'values_list'):
+                value = list(value)
+
+            if isinstance(value, basestring):
+                # It's not an ``InputType``. Assume ``Clean``.
+                value = Clean(value)
+            else:
+                value = PythonData(value)
+
+        # Prepare the query using the InputType.
+        prepared_value = value.prepare(self)
+
+        # 'content' is a special reserved word, much like 'pk' in
+        # Django's ORM layer. It indicates 'no special field'.
+        if field == 'content':
+            index_fieldname = ''
+        else:
+            index_fieldname = u'%s:' % connections[self._using].get_unified_index().get_index_fieldname(field)
+
+        filter_types = {
+            'contains': u'%s',
+            'startswith': u'%s*',
+            'exact': u'%s',
+            'gt': u'{%s TO *}',
+            'gte': u'[%s TO *]',
+            'lt': u'{* TO %s}',
+            'lte': u'[* TO %s]',
+        }
+
+        if value.post_process is False:
+            query_frag = prepared_value
+        else:
+            if filter_type in ['contains', 'startswith']:
+                if value.input_type_name == 'exact':
+                    query_frag = prepared_value
+                else:
+                    # Iterate over terms & incorportate the converted form of each into the query.
+                    terms = []
+
+                    if isinstance(prepared_value, basestring):
+                        for possible_value in prepared_value.split(' '):
+                            terms.append(filter_types[filter_type] % possible_value)
+                    else:
+                        terms.append(filter_types[filter_type] % prepared_value)
+
+                    if len(terms) == 1:
+                        query_frag = terms[0]
+                    else:
+                        query_frag = u"%s" % " AND ".join(terms)
+            elif filter_type == 'in':
+                in_options = []
+
+                for possible_value in prepared_value:
+                    in_options.append(u'"%s"' % possible_value)
+
+                query_frag = u"%s" % " OR ".join(in_options)
+            elif filter_type == 'range':
+                start = prepared_value[0]
+                end = prepared_value[1]
+                query_frag = u'["%s" TO "%s"]' % (start, end)
+            elif filter_type == 'exact':
+                if value.input_type_name == 'exact':
+                    query_frag = prepared_value
+                else:
+                    prepared_value = Exact(prepared_value).prepare(self)
+                    query_frag = filter_types[filter_type] % prepared_value
+            else:
+                if value.input_type_name != 'exact':
+                    prepared_value = Exact(prepared_value).prepare(self)
+
+                query_frag = filter_types[filter_type] % prepared_value
+
+        if len(query_frag) and not query_frag.startswith('(') and not query_frag.endswith(')'):
+            query_frag = "%s" % query_frag
+
+        s = u"%s%s" % (index_fieldname, query_frag)
+        return s
+
 
 
 class CloudsearchSearchEngine(BaseEngine):
