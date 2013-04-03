@@ -455,8 +455,7 @@ class CloudsearchSearchBackend(BaseSearchBackend):
         query = search_service.search(bq=query_string,
                                       return_fields=return_fields,
                                       start=kwargs.get('start_offset', 0),
-                                      size=kwargs.get('end_offset', 0),
-                                      rank=['auction_id'])
+                                      size=kwargs.get('end_offset', 0),)
         return query
 
     def _process_results(self, boto_results, result_class=None):
