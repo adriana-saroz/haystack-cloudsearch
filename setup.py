@@ -7,7 +7,7 @@ def read(fname):
 
 setup(
         name='haystack-cloudsearch',
-        version='0.2',
+        version='0.3',
         description='An Amazon Cloudsearch backend for Haystack',
         long_description=read('README.rst'),
         classifiers=[
