@@ -4,7 +4,6 @@ import time
 from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.db.models.loading import get_model
 from django.utils import simplejson
-from django.core.cache import cache
 
 import haystack
 from haystack.backends import BaseEngine, BaseSearchBackend, BaseSearchQuery
@@ -24,6 +23,7 @@ try:
 except ImportError:
     raise MissingDependency("The 'cloudsearch' backend requires the installation of 'boto'. Please refer to the documentation.")
 
+cache = {}
 
 class CloudsearchSearchBackend(BaseSearchBackend):
 
@@ -56,13 +56,12 @@ class CloudsearchSearchBackend(BaseSearchBackend):
     def get_domain(self, index):
         """ Given a SearchIndex, return a boto Domain object """
         domain = self.get_searchdomain_name(index)
-        cached = cache.get("haystack_cloudsearch.domain.%s" % domain)
-        if cached is None:
+        try:
+            return cache['domain']
+        except KeyError:
             result = return get_domain(domain, self.boto_conn)
-            cache.set("haystack_cloudsearch.domain.%s" % domain, result, 5 * 60)
+            cache['domain'] = result
             return result
-        else:
-            return cached
 
     def enable_index_access(self, index, ip_address):
         """ given an index and an ip_address to enable, enable searching and document services """
@@ -457,7 +456,7 @@ class CloudsearchSearchBackend(BaseSearchBackend):
         except KeyError:
             return_fields = self.field_names_for_index(index)
         try:
-            search_service = self.get_domain(index).get_search_service(loose=False, needs_integrity=True)
+            search_service = self.get_domain(index).get_search_service(needs_integrity=True)
         except (CloudsearchProcessingException, CloudsearchNeedsIndexingException):
             raise  # We should probably wrap this into something more common to haystack
         query = search_service.search(bq=query_string,
