@@ -4,6 +4,7 @@ import time
 from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.db.models.loading import get_model
 from django.utils import simplejson
+from django.core.cache import cache
 
 import haystack
 from haystack.backends import BaseEngine, BaseSearchBackend, BaseSearchQuery
@@ -54,7 +55,14 @@ class CloudsearchSearchBackend(BaseSearchBackend):
 
     def get_domain(self, index):
         """ Given a SearchIndex, return a boto Domain object """
-        return get_domain(self.get_searchdomain_name(index), self.boto_conn)
+        domain = self.get_searchdomain_name(index)
+        cached = cache.get("haystack_cloudsearch.domain.%s" % domain)
+        if cached is None:
+            result = return get_domain(domain, self.boto_conn)
+            cache.set("haystack_cloudsearch.domain.%s" % domain, result, 5 * 60)
+            return result
+        else:
+            return cached
 
     def enable_index_access(self, index, ip_address):
         """ given an index and an ip_address to enable, enable searching and document services """
