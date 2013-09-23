@@ -456,7 +456,7 @@ class CloudsearchSearchBackend(BaseSearchBackend):
         except KeyError:
             return_fields = self.field_names_for_index(index)
         try:
-            search_service = self.get_domain(index).get_search_service(needs_integrity=True)
+            search_service = self.get_domain(index).get_search_service()
         except (CloudsearchProcessingException, CloudsearchNeedsIndexingException):
             raise  # We should probably wrap this into something more common to haystack
         query = search_service.search(bq=query_string,
