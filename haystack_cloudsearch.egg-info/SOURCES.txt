@@ -1,0 +1,12 @@
+MANIFEST.in
+README.rst
+setup.py
+haystack_cloudsearch/__init__.py
+haystack_cloudsearch/cloudsearch_backend.py
+haystack_cloudsearch/cloudsearch_utils.py
+haystack_cloudsearch/exceptions.py
+haystack_cloudsearch/fields.py
+haystack_cloudsearch.egg-info/PKG-INFO
+haystack_cloudsearch.egg-info/SOURCES.txt
+haystack_cloudsearch.egg-info/dependency_links.txt
+haystack_cloudsearch.egg-info/top_level.txt
