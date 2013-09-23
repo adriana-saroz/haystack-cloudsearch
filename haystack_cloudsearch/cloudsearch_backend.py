@@ -4,6 +4,7 @@ import time
 from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.db.models.loading import get_model
 from django.utils import simplejson
+from django.template.defaultfilters import iriencode
 
 import haystack
 from haystack.backends import BaseEngine, BaseSearchBackend, BaseSearchQuery
@@ -459,7 +460,7 @@ class CloudsearchSearchBackend(BaseSearchBackend):
             search_service = self.get_domain(index).get_search_service()
         except (CloudsearchProcessingException, CloudsearchNeedsIndexingException):
             raise  # We should probably wrap this into something more common to haystack
-        query = search_service.search(bq=query_string,
+        query = search_service.search(bq="text:'%s'" % iriencode(query_string),
                                       return_fields=return_fields,
                                       start=kwargs.get('start_offset', 0),
                                       size=kwargs.get('end_offset', 0),)
