@@ -59,7 +59,7 @@ class CloudsearchSearchBackend(BaseSearchBackend):
         try:
             return cache['domain']
         except KeyError:
-            result = return get_domain(domain, self.boto_conn)
+            result = get_domain(domain, self.boto_conn)
             cache['domain'] = result
             return result
 
