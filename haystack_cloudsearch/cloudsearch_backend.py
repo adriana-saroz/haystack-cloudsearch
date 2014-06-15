@@ -19,6 +19,7 @@ from haystack_cloudsearch.exceptions import *
 from haystack_cloudsearch.cloudsearch_utils import (ID, DJANGO_CT, DJANGO_ID,
                                                     gen_version,
                                                     botobool)
+from haystack_cloudsearch.fields import LiteralField
 
 try:
     import boto
@@ -50,7 +51,7 @@ class CloudsearchSearchBackend(BaseSearchBackend):
         if self.ip_address is None:
             raise ImproperlyConfigured("You must specify IP_ADDRESS in your settings for connection '%s'." % connection_alias)
 
-        self.boto_conn = boto.connect_cloudsearch(connection_options['AWS_ACCESS_KEY_ID'], connection_options['AWS_SECRET_KEY'])
+        self.boto_conn = boto.connect_cloudsearch2(connection_options['AWS_ACCESS_KEY_ID'], connection_options['AWS_SECRET_KEY'])
         # this will become a standard haystack logger down the line
         self.log = logging.getLogger('haystack-cloudsearch')
         self.setup_complete = False
@@ -81,7 +82,10 @@ class CloudsearchSearchBackend(BaseSearchBackend):
         return r0, r1
 
     def get_searchdomain_name(self, index, cache={}):
-        """ given a SearchIndex, calculate the name for the CloudSearch SearchDomain """
+        """
+        Given a SearchIndex, calculate the name for the CloudSearch SearchDomain
+
+        """
         try:
             return cache[index]
         except KeyError:
@@ -93,34 +97,24 @@ class CloudsearchSearchBackend(BaseSearchBackend):
                 cache[index] = "%s-%s-%s" % tuple(map(lambda x: x.lower(), (self.search_domain_prefix, model._meta.app_label, unicode(index.__class__.__name__).strip('_'))))
             return cache[index]
 
-    def get_field_type(self, field):
-        """ maps field type classes to cloudsearch field types; raises KeyError if field is unmappable """
-        d = {
-            'CharField': u'text',
-            'FacetCharField': u'text',
-            'UnsignedIntegerField': u'uint',
-            'LiteralField': u'literal',
-            'FacetLiteralField': u'literal',
-            'MultiValueCharField': u'text',
-            'FacetMultiValueCharField': u'text',
-            'MultiValueLiteralField': u'literal',
-            'FacetMultiValueLiteralField': u'literal',
-            'MultiValueUnsignedIntegerField': u'uint',
-        }
-        return d[field.__class__.__name__]
-
     def validate_search_domain_name(self, search_domain_name):
-        """ Validates a SearchDomain name generated from an index against Amazon Cloudsearch constraints. """
-        return True
+        """
+        Validates a SearchDomain name generated from an index against Amazon Cloudsearch constraints.
+
+        """
+        return len(search_domain_name) <= 28
 
     def setup(self):
-        """ create a cloudsearch schema based on haystack SearchIndexes
-            if the haystack models don't match what exists in cloudsearch
+        """
+        Create a cloudsearch schema based on haystack SearchIndexes if
+        the haystack models don't match what exists in cloudsearch.
+
         """
         haystack_conn = haystack.connections[self.connection_alias]
         unified_index = haystack_conn.get_unified_index()
 
         for index in unified_index.collect_indexes():
+
             search_domain_name = self.get_searchdomain_name(index)
             try:
                 self.validate_search_domain_name(search_domain_name)
@@ -128,48 +122,31 @@ class CloudsearchSearchBackend(BaseSearchBackend):
                 self.log.critical("Generated SearchDomain name, '%s', for index, '%s', failed validation constraints." % (
                     search_domain_name, index))
                 raise
-            domain = get_domain(search_domain_name, self.boto_conn)
-            should_build_schema = False
+
+            domain = self.boto_conn.lookup(search_domain_name)
             if domain is None:
                 domain = self.boto_conn.create_domain(search_domain_name)
                 self.setup_complete = False
-                should_build_schema = True
-            description = self.boto_conn.layer1.describe_index_fields(search_domain_name)
-            ideal_schema = self.build_schema(index.fields)
-            if not should_build_schema:
-                # load the schema as a python data type to compare to the idealized schema
-                schema = simplejson.loads(simplejson.dumps([d['options'] for d in description]))
-                key = lambda x: x[u'index_field_name']
-                if [x for x in sorted(schema, key=key)] != [x for x in sorted(ideal_schema, key=key)]:
-                    self.setup_complete = False
-                    should_build_schema = True
 
-            # This currently only will handle the create use case
-            if should_build_schema and not self.setup_complete:
-                for field in ideal_schema:
-                    field_type = field[u'index_field_type']
+            all_fields = self.add_haystack_fields(index.fields)
+            cloud_schema = domain.get_index_fields()
 
-                    args = {'domain_name': search_domain_name,
-                            'field_name': field[u'index_field_name'],
-                            'field_type': field_type}
+            for field_name, field in all_fields.items():
 
-                    if field_type == 'uint':
-                        default = field[u'u_int_options'][u'default_value']
+                cloud_field = next((item for item in cloud_schema if item["IndexFieldName"] == field_name), None)
+                if cloud_field != field.get_index_schema():
 
-                    elif field_type == 'text':
-                        default = field[u'text_options'][u'default_value']
-                        args['facet'] = field[u'text_options'][u'facet_enabled']
-                        args['result'] = field[u'text_options'][u'result_enabled']
-
-                    elif field_type == 'literal':
-                        default = field[u'literal_options'][u'default_value']
-                        args['facet'] = field[u'literal_options'][u'facet_enabled']
-                        args['result'] = field[u'literal_options'][u'result_enabled']
-                        args['searchable'] = field[u'literal_options']['search_enabled']
-
-                    if default is not None:
-                        args['default'] = default
-                    self.boto_conn.layer1.define_index_field(**args)
+                    domain.create_index_field (
+                        field_name = field.index_fieldname,
+                        field_type = field.field_type,
+                        default = field._default,
+                        facet = field.faceted,
+                        returnable = field.return_enabled,
+                        searchable = field.search_enabled,
+                        highlight = field.highlight_enabled,
+                        source_field = field.source_field,
+                        analysis_scheme = field.analysis_scheme
+                    )
 
         self.setup_complete = True  # should be True when finished
 
@@ -177,61 +154,12 @@ class CloudsearchSearchBackend(BaseSearchBackend):
         """ validation checks for index field name requirements imposed by Amazon Cloudsearch """
         return True
 
-    def build_schema(self, fields):
-        """ return a dictionary describing the schema """
-
-        results = []
-        for name, field in fields.iteritems():
-            d = {}
-            default_value = (u'%s' % (field._default,)) if field.has_default() else {}
-            default_value = {}
-            if field.has_default():
-                tmp = field._default
-                if type(tmp) is list:
-                    if len(tmp) != 1:
-                        self.log.critical("Field '%s' of type '%s' is a multivalue field with more than one default. Values outside the first will be truncated!" % (
-                            name, type(field)))
-                    tmp = tmp[0]
-                default_value = u'%s' % (tmp,)
-            try:
-                field_type = self.get_field_type(field)
-            except KeyError:
-                # This needs to be a real exception
-                raise Exception('CloudsearchSearchBackend only supports CharField, UnsignedIntegerField, and LiteralField plus Facet- and MultiValue- variations of these.')
-            d[u'index_field_name'] = unicode(field.index_fieldname)
-            try:
-                self.validate_index_field_name(d[u'index_field_name'])
-            except ValidationError:
-                self.log.critical("Attempted to build schema with an invalid field index name: '%s'." % (d[u'index_field_name'],))
-                raise
-            d[u'index_field_type'] = field_type
-            options = {u'default_value': default_value}
-            if field_type == u'uint':
-                d[u'u_int_options'] = options
-            elif field_type == u'text':
-                options[u'facet_enabled'] = botobool(field.faceted)
-                options[u'result_enabled'] = botobool(field.stored)
-                d[u'text_options'] = options
-            elif field_type == u'literal':
-                options[u'facet_enabled'] = botobool(field.faceted)
-                options[u'result_enabled'] = botobool(field.stored)
-                options[u'search_enabled'] = botobool(field.indexed)
-                d[u'literal_options'] = options
-            if field.stored and field.faceted:
-                raise Exception("Fields must either be faceted or stored, not both.")  # TODO: make this exception named
-            results.append(d)
-
-        # haystack expects these to be able to map a result onto a model
-        for field in (DJANGO_ID, DJANGO_CT, ID):
-            results.append({
-                u'index_field_name': u'%s' % (field,),
-                u'index_field_type': u'literal',
-                u'literal_options': {
-                    u'default_value': {},
-                    u'facet_enabled': 'false',
-                    u'result_enabled': 'true',
-                    u'search_enabled': 'false'}})
-        return results
+    def add_haystack_fields(self, fields):
+        for field_name in (DJANGO_ID, DJANGO_CT, ID):
+            field = LiteralField()
+            field.set_instance_name(field_name)
+            fields[field_name] = field
+        return fields
 
     def get_index_for_obj(self, obj):
         """ inefficiently resolves obj into an index that obj is part of. this could
@@ -294,7 +222,7 @@ class CloudsearchSearchBackend(BaseSearchBackend):
         # this needs some help in terms of generating an id
         for obj in prepped_objs:
             obj['id'] = obj['id'].replace('.', '__')
-            doc_service.add(obj['id'], gen_version(obj), obj)
+            doc_service.add(obj['id'], obj)
         # this can fail if the upload is too large;
         # there should be some error handling around this
         doc_service.commit()
@@ -440,7 +368,7 @@ class CloudsearchSearchBackend(BaseSearchBackend):
         }
 
     def field_names_for_index(self, index):
-        return [x['index_field_name'] for x in self.build_schema(index.fields)]
+        return [x.index_fieldname for x in index.fields]
 
     def internal_field_names(self):
         # this shouldn't be hardcoded and thus is a function for now
