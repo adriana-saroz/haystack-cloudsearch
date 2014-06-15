@@ -4,7 +4,6 @@ from datetime import datetime
 
 from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.db.models.loading import get_model
-from django.utils import simplejson
 from django.template.defaultfilters import iriencode
 
 import haystack
@@ -128,7 +127,9 @@ class CloudsearchSearchBackend(BaseSearchBackend):
                 domain = self.boto_conn.create_domain(search_domain_name)
                 self.setup_complete = False
 
-            all_fields = self.add_haystack_fields(index.fields)
+            all_fields = self.get_haystack_fields()
+            all_fields.update(index.fields)
+
             cloud_schema = domain.get_index_fields()
 
             for field_name, field in all_fields.items():
@@ -154,8 +155,9 @@ class CloudsearchSearchBackend(BaseSearchBackend):
         """ validation checks for index field name requirements imposed by Amazon Cloudsearch """
         return True
 
-    def add_haystack_fields(self, fields):
-        for field_name in (DJANGO_ID, DJANGO_CT, ID):
+    def get_haystack_fields(self):
+        fields = {}
+        for field_name in (DJANGO_ID, DJANGO_CT):
             field = LiteralField()
             field.set_instance_name(field_name)
             fields[field_name] = field
