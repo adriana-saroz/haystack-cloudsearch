@@ -144,9 +144,9 @@ class CloudsearchSearchBackend(BaseSearchBackend):
                         facet = field.faceted,
                         returnable = field.return_enabled,
                         searchable = field.search_enabled,
-                        highlight = field.highlight_enabled,
+                        highlight = field.highlight_enabled if hasattr(field, 'highlight_enabled') else False,
                         source_field = field.source_field,
-                        analysis_scheme = field.analysis_scheme
+                        analysis_scheme = field.analysis_scheme  if hasattr(field, 'analysis_scheme') else None
                     )
 
         self.setup_complete = True  # should be True when finished
@@ -263,7 +263,7 @@ class CloudsearchSearchBackend(BaseSearchBackend):
                 domains.append(self.get_searchdomain_name(i))
 
         if models is None and indexes is None and not domains:
-            domains = [x['domain_name'] for x in self.boto_conn.layer1.describe_domains()]
+            domains = [x.name for x in self.boto_conn.list_domains()]
             if not everything:
                 conn = haystack.connections[self.connection_alias]
                 unified_index = conn.get_unified_index()
@@ -301,7 +301,7 @@ class CloudsearchSearchBackend(BaseSearchBackend):
         return False
 
     def domain_processing_spinlock(self, domains):
-        return self.spinlock(lambda: not filter(None, map(get_domain, domains, self.boto_conn)), CloudsearchProcessingException, 'domain processing')
+        return self.spinlock(lambda: not filter(None, map(self.boto_conn.lookup, domains)), CloudsearchProcessingException, 'domain processing')
 
     def search(self, query_string, **kwargs):
         """ Blended search across all SearchIndexes.
