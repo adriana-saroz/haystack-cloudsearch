@@ -157,7 +157,7 @@ class CloudsearchSearchBackend(BaseSearchBackend):
 
     def get_haystack_fields(self):
         fields = {}
-        for field_name in (DJANGO_ID, DJANGO_CT):
+        for field_name in (DJANGO_ID, DJANGO_CT, ID):
             field = LiteralField()
             field.set_instance_name(field_name)
             fields[field_name] = field
