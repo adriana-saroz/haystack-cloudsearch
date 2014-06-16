@@ -242,7 +242,7 @@ class CloudsearchSearchBackend(BaseSearchBackend):
             index = self.get_index_for_obj(obj_or_string)
 
         doc_service = self.get_domain(index).get_document_service()
-        doc_service.delete(obj_id, int(time.mktime(datetime.utcnow().timetuple())))
+        doc_service.delete(obj_id)
         doc_service.commit()
 
     def index_event(self, index):
